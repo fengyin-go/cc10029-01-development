@@ -77,6 +77,20 @@ function openCreate() { createValues.value = {}; showCreate.value = true }
 async function submitCreate() {
   try { const res = await request(ENDPOINT, { method: 'POST', body: JSON.stringify({ values: createValues.value }) }); if(!res.ok) throw new Error('创建失败'); showCreate.value = false; await reload() } catch(e: any) { errorMessage.value = e.message }
 }
-function exportRows() { window.open(`${ENDPOINT}/export`, '_blank') }
+async function exportRows() {
+  errorMessage.value = ''
+  try {
+    const response = await request(`${ENDPOINT}/export`)
+    if (!response.ok) throw new Error('导出失败，请稍后重试')
+    const url = URL.createObjectURL(await response.blob())
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'extractor.csv'
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '导出失败'
+  }
+}
 onMounted(reload)
 </script>

@@ -1,9 +1,12 @@
-"""采集校验 分析看板接口：汇总指标、参数运行与结果导出。"""
+"""采集校验 分析看板接口：汇总指标、参数运行与结果导出。
+
+质量趋势数据报告的校验结论同步到本模块的校验趋势记录台账，
+页面汇总与运行分析只读同一份可见发布批次的记录。
+"""
 from __future__ import annotations
 
 import csv
 import io
-import random
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -27,11 +30,29 @@ def csv_cell(value: Any) -> str:
 
 @router.get("/summary")
 def get_summary() -> dict[str, Any]:
+    """看板卡片：样本数、异常数与达标率来自质量趋势同步过来的校验趋势记录。"""
+    records = service.trend_records()
+    total = sum(int(item.get("样本数量", 0)) for item in records)
+    abnormal = sum(int(item.get("异常数", 0)) for item in records)
+    periods = {str(item.get("统计周期")) for item in records}
     return {"metrics": [
-        {"label": "覆盖数据源", "value": random.randint(12, 45), "trend": random.randint(-12, 25)},
-        {"label": "最新指标值", "value": round(random.uniform(0.72, 0.99), 3), "trend": random.randint(-8, 15)},
-        {"label": "异常记录", "value": random.randint(0, 8), "trend": -random.randint(1, 10)},
+        {"label": "统计周期数", "value": len(periods), "trend": 0},
+        {"label": "校验样本数", "value": total, "trend": 0},
+        {"label": "异常样本数", "value": abnormal, "trend": 0},
+        {"label": "达标率", "value": round((total - abnormal) / total, 6) if total else 0.0, "trend": 0},
     ]}
+
+
+@router.get("/trend-records")
+def list_trend_records() -> dict[str, Any]:
+    """校验趋势记录台账（质量趋势数据报告同步而来）。"""
+    return {"items": service.trend_records()}
+
+
+@router.get("/anomaly-records")
+def list_anomaly_records() -> dict[str, Any]:
+    """采集校验异常处置台账（质量趋势的异常结论回写而来）。"""
+    return {"items": service.anomaly_records()}
 
 
 @router.get("")

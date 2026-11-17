@@ -18,6 +18,7 @@ from app.routers import retry as router_retry
 from app.routers import storage as router_storage
 from app.routers import dedup as router_dedup
 from app.routers import quality as router_quality
+from app.routers import quality_trend as router_quality_trend
 from app.routers import monitor as router_monitor
 from app.routers import alert as router_alert
 from app.routers import apigate as router_apigate
@@ -25,4 +26,4 @@ from app.routers import archive as router_archive
 from app.routers import template as router_template
 from app.routers import flowline as router_flowline
 
-ROUTERS = [router_targetsite, router_selector, router_crawler, router_proxy, router_antiblock, router_schedule, router_extractor, router_validate, router_retry, router_storage, router_dedup, router_quality, router_monitor, router_alert, router_apigate, router_archive, router_template, router_flowline]
+ROUTERS = [router_targetsite, router_selector, router_crawler, router_proxy, router_antiblock, router_schedule, router_extractor, router_validate, router_retry, router_storage, router_dedup, router_quality_trend, router_quality, router_monitor, router_alert, router_apigate, router_archive, router_template, router_flowline]

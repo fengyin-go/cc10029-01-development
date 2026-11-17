@@ -20,7 +20,9 @@ export default defineConfig({
     open: false,
     strictPort: false,
     proxy: {
-      '/api': {
+      // 只代理 /api/ 前缀：写成 '/api' 会把前端页面 /apigate 也吞进代理，
+      // 刷新该页面会拿到后端的 404 JSON 而不是单页应用。
+      '^/api/': {
         target: proxyTarget,
         changeOrigin: true,
       },

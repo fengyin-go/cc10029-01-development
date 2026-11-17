@@ -1,15 +1,18 @@
-"""质量报告 分析看板接口：汇总指标、参数运行与结果导出。"""
+"""质量报告 分析看板接口：汇总指标、参数运行与结果导出。
+
+质量趋势数据报告由质量报告提供视图：`/api/quality/trends` 在列表呈现，
+本模块的汇总与运行分析读同一份可见发布批次。
+"""
 from __future__ import annotations
 
 import csv
 import io
-import random
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.schemas import ActionPayload, ActionResult, EntryPayload
+from app.schemas import EntryPayload
 from app.services.quality import QualityService
 
 router = APIRouter(prefix="/api/quality", tags=["质量报告"])
@@ -27,10 +30,14 @@ def csv_cell(value: Any) -> str:
 
 @router.get("/summary")
 def get_summary() -> dict[str, Any]:
+    """看板卡片：样本数量、异常数与达标率都取最新可见趋势批次。"""
+    reports = service.trend_reports()
+    latest = reports[0] if reports else {}
     return {"metrics": [
-        {"label": "覆盖数据源", "value": random.randint(12, 45), "trend": random.randint(-12, 25)},
-        {"label": "最新指标值", "value": round(random.uniform(0.72, 0.99), 3), "trend": random.randint(-8, 15)},
-        {"label": "异常记录", "value": random.randint(0, 8), "trend": -random.randint(1, 10)},
+        {"label": "统计周期", "value": latest.get("统计周期", "—"), "trend": 0},
+        {"label": "样本数量", "value": latest.get("样本数量", 0), "trend": 0},
+        {"label": "异常数", "value": latest.get("异常数", 0), "trend": 0},
+        {"label": "达标率", "value": latest.get("达标率", 0.0), "trend": 0},
     ]}
 
 

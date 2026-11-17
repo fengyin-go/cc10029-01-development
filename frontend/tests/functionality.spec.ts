@@ -610,6 +610,113 @@ test('分析看板模块：KPI卡片、运行分析、图表渲染', async ({ pa
   expect(browserErrors).toEqual([])
 })
 
+test('质量趋势数据报告：周期切换、样本依据、规则版本与台账核对', async ({ page }) => {
+  test.setTimeout(300_000)
+  const browserErrors: string[] = []
+  page.on('pageerror', e => browserErrors.push(e.message))
+  page.on('response', r => { if (r.url().includes('/api/') && r.status()>=400) browserErrors.push(`${r.status()} ${r.url()}`) })
+
+  await page.goto('/quality')
+  await expect(page.getByTestId('trend-table')).toBeVisible()
+  const rows = page.getByTestId('trend-row')
+  await expect(rows.first()).toBeVisible()
+  // 同一统计周期只呈现一份报告
+  const periodsSeen = await rows.locator('td:first-child').allInnerTexts()
+  expect(new Set(periodsSeen).size).toBe(periodsSeen.length)
+  // 每个统计周期都带规则版本
+  for (const text of await rows.locator('td:nth-child(3)').allInnerTexts()) {
+    expect(text.trim().length).toBeGreaterThan(0)
+  }
+
+  // 切换周期：样本数量、迟到样本和样本快照一起变化
+  const switcher = page.getByTestId('period-switch')
+  const options = await switcher.locator('option').allInnerTexts()
+  expect(options.length).toBeGreaterThanOrEqual(2)
+  const firstPeriod = (await switcher.inputValue())
+  const firstSamples = Number(await page.getByTestId('detail-samples').innerText())
+  const firstLate = Number(await page.getByTestId('detail-late').innerText())
+  await switcher.selectOption(options.find(o => o !== firstPeriod)!)
+  await expect(page.getByTestId('detail-period')).not.toHaveText(firstPeriod)
+  const secondSamples = Number(await page.getByTestId('detail-samples').innerText())
+  expect(secondSamples).toBeGreaterThan(0)
+  // 样本快照行数与样本数量一致，指标数据集和快照同批可见
+  await expect(page.getByTestId('sample-table').locator('tbody tr')).toHaveCount(secondSamples)
+  await expect(page.getByTestId('dataset-table').locator('tbody tr').first()).toBeVisible()
+  await expect(page.getByTestId('trend-record-table').locator('tbody tr').first()).toBeVisible()
+  await expect(page.getByTestId('anomaly-table')).toBeVisible()
+  expect(firstSamples).toBeGreaterThan(0)
+  expect(firstLate).toBeGreaterThanOrEqual(0)
+
+  // 规则版本可见
+  await expect(page.getByTestId('detail-rule')).toContainText('RULE-')
+
+  // 采集校验侧能读到同步过来的校验趋势记录
+  await page.goto('/validate')
+  await expect(page.getByTestId('trend-ledger').locator('tbody tr').first()).toBeVisible()
+  await expect(page.getByTestId('anomaly-ledger')).toBeVisible()
+
+  expect(browserErrors).toEqual([])
+})
+
+test('质量趋势接口：迟到样本只重算所属周期、重复送交只写一份、落库失败整批回退', async ({ request }) => {
+  test.setTimeout(120_000)
+  const list = await (await request.get('/api/quality/trends')).json()
+  expect(list.items.length).toBeGreaterThanOrEqual(2)
+  const periods = list.items.map((item: any) => item.统计周期)
+  const target = periods[0]
+  const other = periods[1]
+  const beforeOther = list.items.find((item: any) => item.统计周期 === other)
+  const beforeTarget = list.items.find((item: any) => item.统计周期 === target)
+
+  // 重复送交同一统计周期（同一规则、同一批样本）只保留一份
+  const repeat = await request.post('/api/quality/trends', { data: { values: { 统计周期: target, 规则版本: beforeTarget.规则版本 } } })
+  expect((await repeat.json()).ok).toBe(true)
+  const afterRepeat = await (await request.get(`/api/quality/trends?period=${target}`)).json()
+  expect(afterRepeat.total).toBe(1)
+  expect(afterRepeat.items[0].版本号).toBe(beforeTarget.版本号)
+
+  // 另一规则的口径冲突：最终仍只展示一份带规则版本的报告
+  const conflict = await (await request.post('/api/quality/trends', { data: { values: { 统计周期: target, 规则版本: 'RULE-B@1' } } })).json()
+  expect(conflict.ok).toBe(true)
+  const afterConflict = await (await request.get(`/api/quality/trends?period=${target}`)).json()
+  expect(afterConflict.total).toBe(1)
+  expect(afterConflict.items[0].规则版本).toContain('RULE-')
+
+  // 迟到样本只改所属统计周期
+  const late = await (await request.post(`/api/quality/trends/${target}/late-samples`, {
+    data: { values: { 样本编号: `E2E-LATE-${Date.now()}`, 指标编号: 'QUAL-0001', 样本值: 0.1 } },
+  })).json()
+  expect(late.ok).toBe(true)
+  expect(late.entry.report.版本号).toBeGreaterThan(beforeTarget.版本号)
+  const afterLate = await (await request.get('/api/quality/trends')).json()
+  expect(afterLate.items.find((item: any) => item.统计周期 === other).版本号).toBe(beforeOther.版本号)
+
+  // 落库失败：指标数字与样本依据一起回退，不留半份数据
+  const beforeFail = await (await request.get(`/api/quality/trends/${target}`)).json()
+  const failed = await (await request.post('/api/quality/trends', {
+    data: { values: { 统计周期: target, 样本: [{ 样本编号: `E2E-FAIL-${Date.now()}`, 指标编号: 'QUAL-0001', 样本值: 0.2 }], 模拟落库失败: '1' } },
+  })).json()
+  expect(failed.ok).toBe(false)
+  const afterFail = await (await request.get(`/api/quality/trends/${target}`)).json()
+  expect(afterFail.report.版本号).toBe(beforeFail.report.版本号)
+  expect(afterFail.samples.length).toBe(beforeFail.samples.length)
+
+  // 半份落库（指标数据集已写、样本快照失败）也必须整批回退
+  const partial = await (await request.post('/api/quality/trends', {
+    data: { values: { 统计周期: target, 样本: [{ 样本编号: `E2E-PARTIAL-${Date.now()}`, 指标编号: 'QUAL-0001', 样本值: 0.3 }], 模拟部分落库失败: '1' } },
+  })).json()
+  expect(partial.ok).toBe(false)
+  const afterPartial = await (await request.get(`/api/quality/trends/${target}`)).json()
+  expect(afterPartial.report.版本号).toBe(beforeFail.report.版本号)
+  expect(afterPartial.samples.length).toBe(beforeFail.samples.length)
+  expect(afterPartial.datasets.length).toBe(beforeFail.datasets.length)
+
+  // 趋势中的异常数与达标率回到同一统计窗口
+  expect(afterFail.report.异常数 + afterFail.report.达标样本数).toBe(afterFail.report.样本数量)
+  expect(afterFail.trendRecords.length).toBe(afterFail.report.指标数量)
+})
+
+
 test('概览汇总', async ({ page }) => {
   test.setTimeout(300_000)
   const totalNew = modules.length * 3
